@@ -1,11 +1,7 @@
 #![warn(clippy::all, clippy::pedantic)]
 use std::path::Path;
 
-use irs_1094b_error_parser::parse_data_file;
-use record_error::RecordError;
-use record_name::RecordName;
-mod record_error;
-mod record_name;
+use irs_1094b_error_parser::{parse_data_file, RecordError, RecordName};
 
 fn main() {
     let error_file_path = Path::new("../Test AIR Errors.xml");

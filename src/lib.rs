@@ -1,20 +1,16 @@
-use std::{fs::File, io::BufReader, path::Path};
+use std::path::Path;
 
 use lazy_static::lazy_static;
-use quick_xml::{
-    events::{BytesStart, BytesText, Event},
-    Reader,
-};
+use quick_xml::{events::Event, Reader};
+pub use record_error::RecordError;
+pub use record_name::RecordName;
 use regex::Regex;
+mod record_error;
+mod record_name;
 
 pub trait FromXmlEvents {
     type FieldType;
-    fn from_xml_events(
-        &mut self,
-        field_type: Self::FieldType,
-        text: BytesText<'_>,
-        reader: &Reader<BufReader<File>>,
-    );
+    fn from_xml_text(&mut self, field_type: Self::FieldType, text: &str);
 
     fn is_last_event(field_type: Self::FieldType) -> bool;
 }
@@ -22,7 +18,7 @@ pub trait FromXmlEvents {
 pub fn parse_data_file<'a, T>(path: &Path) -> Vec<T>
 where
     T: FromXmlEvents + Default + Ord + Clone,
-    T::FieldType: Copy + TryFrom<BytesStart<'static>>,
+    T::FieldType: Copy + TryFrom<String>,
 {
     let mut all_data = Vec::new();
     let mut reader = Box::new(Reader::from_file(path).unwrap());
@@ -34,10 +30,16 @@ where
         let event = reader.read_event(&mut buffer);
         match event {
             Ok(Event::Eof) => break,
-            Ok(Event::Start(s)) => current_field_type = s.to_owned().try_into().ok(),
+            Ok(Event::Start(s)) => {
+                current_field_type = String::from_utf8(s.name().to_vec())
+                    .unwrap()
+                    .try_into()
+                    .ok()
+            }
             Ok(Event::Text(t)) => {
                 if let Some(field_type) = current_field_type {
-                    current_data.from_xml_events(field_type, t, &reader);
+                    current_data
+                        .from_xml_text(field_type, &t.unescape_and_decode(&reader).unwrap());
                     if T::is_last_event(field_type) && current_data != T::default() {
                         all_data.push(current_data.clone());
                         current_data = T::default();

@@ -1,9 +1,8 @@
-use irs_1094b_error_parser::{remove_excess_whitespace, FromXmlEvents};
+use crate::{remove_excess_whitespace, FromXmlEvents};
 use lazy_static::lazy_static;
-use quick_xml::events::BytesStart;
 use regex::Regex;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct RecordError {
     record_id: usize,
     error_text: String,
@@ -29,30 +28,14 @@ impl PartialOrd for RecordError {
     }
 }
 
-impl Default for RecordError {
-    fn default() -> Self {
-        Self {
-            record_id: Default::default(),
-            error_text: Default::default(),
-        }
-    }
-}
-
 impl FromXmlEvents for RecordError {
     type FieldType = RecordErrorFieldType;
 
-    fn from_xml_events(
-        &mut self,
-        field_type: Self::FieldType,
-        text: quick_xml::events::BytesText<'_>,
-        reader: &quick_xml::Reader<std::io::BufReader<std::fs::File>>,
-    ) {
-        let text = &text.unescape_and_decode(&reader).unwrap();
+    fn from_xml_text(&mut self, field_type: Self::FieldType, text: &str) {
+        let text = &remove_excess_whitespace(text);
         match field_type {
-            RecordErrorFieldType::RecordId => {
-                self.record_id = parse_record_id(&remove_excess_whitespace(text))
-            }
-            RecordErrorFieldType::ErrorText => self.error_text = remove_excess_whitespace(text),
+            RecordErrorFieldType::RecordId => self.record_id = parse_record_id(text),
+            RecordErrorFieldType::ErrorText => self.error_text = text.to_string(),
         }
     }
 
@@ -78,13 +61,13 @@ pub enum RecordErrorFieldType {
     ErrorText,
 }
 
-impl TryFrom<BytesStart<'_>> for RecordErrorFieldType {
+impl TryFrom<String> for RecordErrorFieldType {
     type Error = ();
 
-    fn try_from(value: BytesStart<'_>) -> Result<Self, Self::Error> {
-        match value.name() {
-            b"UniqueRecordId" => Ok(RecordErrorFieldType::RecordId),
-            b"ns2:ErrorMessageTxt" => Ok(RecordErrorFieldType::ErrorText),
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "UniqueRecordId" => Ok(RecordErrorFieldType::RecordId),
+            "ns2:ErrorMessageTxt" => Ok(RecordErrorFieldType::ErrorText),
             _ => Err(()),
         }
     }
