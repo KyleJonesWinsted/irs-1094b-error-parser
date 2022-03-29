@@ -8,17 +8,16 @@ use regex::Regex;
 mod record_error;
 mod record_name;
 
-pub trait FromXmlEvents {
-    type FieldType;
+pub trait FromXmlEvents: Default + Ord + Clone {
+    type FieldType: Copy + TryFrom<String>;
     fn from_xml_text(&mut self, field_type: Self::FieldType, text: &str);
 
     fn is_last_event(field_type: Self::FieldType) -> bool;
 }
 
-pub fn parse_data_file<'a, T>(path: &Path) -> Vec<T>
+pub fn parse_data_file<T>(path: &Path) -> Vec<T>
 where
-    T: FromXmlEvents + Default + Ord + Clone,
-    T::FieldType: Copy + TryFrom<String>,
+    T: FromXmlEvents,
 {
     let mut all_data = Vec::new();
     let mut reader = Box::new(Reader::from_file(path).unwrap());
