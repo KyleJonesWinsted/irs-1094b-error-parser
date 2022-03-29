@@ -4,8 +4,8 @@ use regex::Regex;
 
 #[derive(Debug, Default, Clone)]
 pub struct RecordError {
-    record_id: usize,
-    error_text: String,
+    pub record_id: usize,
+    pub error_text: String,
 }
 
 impl PartialEq for RecordError {

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{env::args, path::Path, process::exit};
 
 use lazy_static::lazy_static;
 use quick_xml::{events::Event, Reader};
@@ -7,6 +7,41 @@ pub use record_name::RecordName;
 use regex::Regex;
 mod record_error;
 mod record_name;
+
+#[derive(Debug, Clone)]
+pub struct Output {
+    pub name: Option<RecordName>,
+    pub error: RecordError,
+}
+
+impl Output {
+    pub fn new(name: Option<RecordName>, error: RecordError) -> Self {
+        Self { name, error }
+    }
+}
+
+pub fn write_output_file(output: Vec<Output>, output_path: &str) {
+    let mut writer = csv::Writer::from_path(output_path).unwrap();
+    writer
+        .write_record(["ID", "Error", "First Name", "Last Name"])
+        .unwrap();
+    for row in output {
+        if let Some(name) = row.name {
+            writer
+                .write_record([
+                    name.record_id.to_string(),
+                    row.error.error_text,
+                    name.first_name,
+                    name.last_name,
+                ])
+                .unwrap();
+        } else {
+            writer
+                .write_record([row.error.record_id.to_string(), row.error.error_text])
+                .unwrap();
+        }
+    }
+}
 
 pub trait FromXmlEvents: Default + Ord + Clone {
     type FieldType: Copy + TryFrom<String>;
@@ -58,4 +93,44 @@ pub fn remove_excess_whitespace(s: &str) -> String {
         static ref RE: Regex = Regex::new(r#"\s+"#).unwrap();
     }
     RE.replace_all(s, " ").to_string()
+}
+
+pub fn match_error_to_name(
+    record_name_data: Vec<RecordName>,
+    error_data: Vec<RecordError>,
+) -> Vec<Output> {
+    error_data
+        .into_iter()
+        .map(|error| {
+            let name = record_name_data
+                .binary_search_by_key(&error.record_id, |name| name.record_id)
+                .ok()
+                .and_then(|index| record_name_data.get(index))
+                .map(|name| name.clone());
+            Output { name, error }
+        })
+        .collect()
+}
+
+pub struct Paths {
+    pub error_file: String,
+    pub name_file: String,
+    pub output_file: String,
+}
+
+pub fn get_paths() -> Paths {
+    let mut argv = args();
+    let error_message = "
+    Missing required arguments
+    Usage: <command> <error-file-path> <name-file-path> <output-file-path>
+    ";
+    let early_exit = || {
+        println!("{}", error_message);
+        exit(1);
+    };
+    Paths {
+        error_file: argv.nth(1).unwrap_or_else(early_exit),
+        name_file: argv.next().unwrap_or_else(early_exit),
+        output_file: argv.next().unwrap_or_else(early_exit),
+    }
 }

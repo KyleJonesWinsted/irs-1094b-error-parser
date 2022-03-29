@@ -2,9 +2,9 @@ use crate::FromXmlEvents;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct RecordName {
-    record_id: usize,
-    first_name: String,
-    last_name: String,
+    pub record_id: usize,
+    pub first_name: String,
+    pub last_name: String,
 }
 
 impl PartialOrd for RecordName {
