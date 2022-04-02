@@ -31,16 +31,12 @@ impl PartialOrd for RecordError {
 impl FromXmlEvents for RecordError {
     type FieldType = RecordErrorFieldType;
 
-    fn from_xml_text(&mut self, field_type: Self::FieldType, text: &str) {
+    fn insert_xml_value(&mut self, field_type: Self::FieldType, text: &str) {
         let text = &remove_excess_whitespace(text);
         match field_type {
             RecordErrorFieldType::RecordId => self.record_id = parse_record_id(text),
             RecordErrorFieldType::ErrorText => self.error_text = text.to_string(),
         }
-    }
-
-    fn is_last_event(field_type: Self::FieldType) -> bool {
-        field_type == RecordErrorFieldType::ErrorText
     }
 }
 

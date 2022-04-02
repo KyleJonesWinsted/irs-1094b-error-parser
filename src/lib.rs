@@ -1,4 +1,12 @@
-use std::{env::args, path::Path, process::exit};
+use std::{
+    env::args,
+    error::Error,
+    fmt::{Debug, Display},
+    fs::File,
+    io::BufReader,
+    marker::PhantomData,
+    path::Path,
+};
 
 use lazy_static::lazy_static;
 use quick_xml::{events::Event, Reader};
@@ -8,45 +16,82 @@ use regex::Regex;
 mod record_error;
 mod record_name;
 
-pub trait FromXmlEvents: Default + Ord + Clone {
-    type FieldType: Copy + TryFrom<String>;
-    fn from_xml_text(&mut self, field_type: Self::FieldType, text: &str);
+pub trait FromXmlEvents: Default + PartialEq {
+    type FieldType: PartialEq + Copy + TryFrom<String>;
+    fn insert_xml_value(&mut self, field_type: Self::FieldType, text: &str);
+}
 
-    fn is_last_event(field_type: Self::FieldType) -> bool;
+pub struct XmlEvents<T: FromXmlEvents> {
+    reader: Reader<BufReader<File>>,
+    buffer: Vec<u8>,
+    item: PhantomData<T>,
+    current_field_type: Option<T::FieldType>,
+    seen_fields: Vec<T::FieldType>,
+}
 
-    fn parse_from_xml_file(path: &Path) -> Vec<Self> {
-        let mut all_data = Vec::new();
-        let mut reader = Box::new(Reader::from_file(path).unwrap());
+impl<T: FromXmlEvents> XmlEvents<T> {
+    pub fn try_from_path(path: &Path) -> Result<XmlEvents<T>, Box<dyn Error>> {
+        let mut reader = Reader::from_file(path)?;
         reader.trim_text(true);
-        let mut buffer = Vec::new();
-        let mut current_data = Self::default();
-        let mut current_field_type = None;
+        Ok(XmlEvents {
+            reader,
+            buffer: Vec::new(),
+            item: PhantomData,
+            current_field_type: None,
+            seen_fields: Vec::new(),
+        })
+    }
+
+    fn is_end_of_current_record(&mut self) -> bool {
+        if let Some(current_field_type) = self.current_field_type {
+            let is_end = if self.seen_fields.contains(&current_field_type) {
+                self.seen_fields.clear();
+                true
+            } else {
+                false
+            };
+            self.seen_fields.push(current_field_type);
+            return is_end;
+        }
+        false
+    }
+
+    fn bytes_to_field(s: quick_xml::events::BytesStart) -> Option<T::FieldType> {
+        String::from_utf8(s.name().to_vec())
+            .unwrap()
+            .try_into()
+            .ok()
+    }
+}
+
+impl<T: FromXmlEvents> Iterator for XmlEvents<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut current_data = T::default();
         loop {
-            let event = reader.read_event(&mut buffer);
+            let event = self.reader.read_event(&mut self.buffer);
             match event {
-                Ok(Event::Eof) => break,
+                Ok(Event::Eof) => return None,
                 Ok(Event::Start(s)) => {
-                    current_field_type = String::from_utf8(s.name().to_vec())
-                        .unwrap()
-                        .try_into()
-                        .ok()
+                    self.current_field_type = Self::bytes_to_field(s);
+                    if self.is_end_of_current_record() && current_data != T::default() {
+                        return Some(current_data);
+                    }
                 }
+                Ok(Event::End(_)) => (),
                 Ok(Event::Text(t)) => {
-                    if let Some(field_type) = current_field_type {
-                        current_data
-                            .from_xml_text(field_type, &t.unescape_and_decode(&reader).unwrap());
-                        if Self::is_last_event(field_type) && current_data != Self::default() {
-                            all_data.push(current_data.clone());
-                            current_data = Self::default();
-                        }
+                    if let Some(field_type) = self.current_field_type {
+                        current_data.insert_xml_value(
+                            field_type,
+                            &t.unescape_and_decode(&self.reader).unwrap(),
+                        );
                     }
                 }
                 Err(e) => println!("{:?}", e),
                 _ => (),
             }
         }
-        all_data.sort_unstable();
-        all_data
     }
 }
 
@@ -69,45 +114,67 @@ pub struct InputPaths {
 }
 
 impl InputPaths {
-    pub fn get_or_exit() -> InputPaths {
+    pub fn get() -> Result<InputPaths, InputPathsError> {
         let mut argv = args();
-        let error_message = "
-Missing required arguments
-Usage: <command> <error-file-path> <name-file-path> <output-file-path>
-        ";
-        let early_exit = || {
-            println!("{}", error_message);
-            exit(1);
-        };
-        InputPaths {
-            error_file: argv.nth(1).unwrap_or_else(early_exit),
-            name_file: argv.next().unwrap_or_else(early_exit),
-            output_file: argv.next().unwrap_or_else(early_exit),
-        }
+        Ok(InputPaths {
+            error_file: argv.nth(1).ok_or(InputPathsError)?,
+            name_file: argv.next().ok_or(InputPathsError)?,
+            output_file: argv.next().ok_or(InputPathsError)?,
+        })
     }
 }
 
-pub fn write_output_file(output: Vec<Output>, output_path: &str) {
+pub struct InputPathsError;
+
+impl Display for InputPathsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        write!(
+            f,
+            "
+Missing required arguments
+Usage: <command> <error-file-path> <name-file-path> <output-file-path>
+        "
+        )
+    }
+}
+
+impl Debug for InputPathsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        Display::fmt(&self, f)
+    }
+}
+
+impl Error for InputPathsError {}
+
+pub fn write_output_file(output: impl Iterator<Item = Output>, output_path: &str) -> usize {
     let mut writer = csv::Writer::from_path(output_path).unwrap();
+    let mut written_rows = 0;
     writer
         .write_record(["ID", "Error", "First Name", "Last Name"])
         .unwrap();
     for row in output {
-        if let Some(name) = row.name {
+        if let Some(name) = &row.name {
             writer
                 .write_record([
-                    name.record_id.to_string(),
-                    row.error.error_text,
-                    name.first_name,
-                    name.last_name,
+                    &name.record_id.to_string(),
+                    &row.error.error_text,
+                    &name.first_name,
+                    &name.last_name,
                 ])
                 .unwrap();
         } else {
             writer
-                .write_record([row.error.record_id.to_string(), row.error.error_text])
+                .write_record([
+                    &row.error.record_id.to_string(),
+                    &row.error.error_text,
+                    "",
+                    "",
+                ])
                 .unwrap();
         }
+        written_rows += 1;
     }
+    written_rows
 }
 
 pub fn remove_excess_whitespace(s: &str) -> String {
@@ -117,19 +184,15 @@ pub fn remove_excess_whitespace(s: &str) -> String {
     RE.replace_all(s, " ").to_string()
 }
 
-pub fn match_error_to_name(
-    record_name_data: Vec<RecordName>,
-    error_data: Vec<RecordError>,
-) -> Vec<Output> {
-    error_data
-        .into_iter()
-        .map(|error| {
-            let name = record_name_data
-                .binary_search_by_key(&error.record_id, |name| name.record_id)
-                .ok()
-                .and_then(|index| record_name_data.get(index))
-                .map(|name| name.clone());
-            Output { name, error }
-        })
-        .collect()
+pub fn match_error_to_name<'a>(
+    record_name_data: &'a [RecordName],
+    error_data: impl Iterator<Item = RecordError> + 'a,
+) -> impl Iterator<Item = Output> + 'a {
+    error_data.map(|error| {
+        let name = record_name_data
+            .iter()
+            .find(|name| name.record_id == error.record_id)
+            .cloned();
+        Output { name, error }
+    })
 }

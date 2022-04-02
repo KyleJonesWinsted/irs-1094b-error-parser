@@ -22,16 +22,12 @@ impl Ord for RecordName {
 impl FromXmlEvents for RecordName {
     type FieldType = RecordNameFieldType;
 
-    fn from_xml_text(&mut self, field_type: RecordNameFieldType, text: &str) {
+    fn insert_xml_value(&mut self, field_type: RecordNameFieldType, text: &str) {
         match field_type {
-            RecordNameFieldType::RecordId => self.record_id = text.parse().unwrap(),
+            RecordNameFieldType::RecordId => self.record_id = text.parse().unwrap_or_default(),
             RecordNameFieldType::FirstName => self.first_name = text.to_string(),
             RecordNameFieldType::LastName => self.last_name = text.to_string(),
         };
-    }
-
-    fn is_last_event(field_type: Self::FieldType) -> bool {
-        field_type == RecordNameFieldType::LastName
     }
 }
 
