@@ -1,24 +1,26 @@
 #![warn(clippy::all, clippy::pedantic)]
-use std::{error::Error, path::Path, time::Instant};
 
-use irs_1094b_error_parser::{
-    match_error_to_name, write_output_file, InputPaths, RecordName, XmlEvents,
-};
+mod ui;
 
-fn main() -> Result<(), Box<dyn Error>> {
-    let start = Instant::now();
-    let paths = InputPaths::get()?;
-    let error_file_path = Path::new(&paths.error_file);
-    let record_name_file_path = Path::new(&paths.name_file);
-    let record_name_data: Vec<RecordName> =
-        XmlEvents::try_from_path(record_name_file_path)?.collect();
-    let error_data = XmlEvents::try_from_path(error_file_path)?;
-    let output = match_error_to_name(&record_name_data, error_data);
-    let written_rows = write_output_file(output, &paths.output_file);
-    println!(
-        "Done! Matched {} errors in {:?}",
-        written_rows,
-        start.elapsed()
-    );
-    Ok(())
+use iced::{Application, Settings};
+use irs_1094b_error_parser::{process_files, InputPaths};
+use native_dialog::FileDialog;
+use std::{env::args, process::exit};
+use ui::{App, OPEN_FILE_ARG};
+
+fn main() {
+    if args().nth(1).unwrap_or_default() == OPEN_FILE_ARG {
+        let path = FileDialog::new().show_open_single_file().unwrap().unwrap();
+        print!("{:?}", path);
+        exit(0);
+    }
+    if let Ok(paths) = InputPaths::get() {
+        process_files(&paths).unwrap_or_else(|e| {
+            eprintln!("{}", e);
+            exit(1);
+        });
+        exit(0);
+    }
+    let settings = Settings::default();
+    App::run(settings).unwrap();
 }

@@ -6,6 +6,7 @@ use std::{
     io::BufReader,
     marker::PhantomData,
     path::Path,
+    time::Instant,
 };
 
 use lazy_static::lazy_static;
@@ -107,6 +108,7 @@ impl Output {
     }
 }
 
+#[derive(Debug, Default)]
 pub struct InputPaths {
     pub error_file: String,
     pub name_file: String,
@@ -195,4 +197,21 @@ pub fn match_error_to_name<'a>(
             .cloned();
         Output { name, error }
     })
+}
+
+pub fn process_files(paths: &InputPaths) -> Result<(), Box<dyn Error>> {
+    let start = Instant::now();
+    let error_file_path = Path::new(&paths.error_file);
+    let record_name_file_path = Path::new(&paths.name_file);
+    let record_name_data: Vec<RecordName> =
+        XmlEvents::try_from_path(record_name_file_path)?.collect();
+    let error_data = XmlEvents::try_from_path(error_file_path)?;
+    let output = match_error_to_name(&record_name_data, error_data);
+    let written_rows = write_output_file(output, &paths.output_file);
+    println!(
+        "Done! Matched {} errors in {:?}",
+        written_rows,
+        start.elapsed()
+    );
+    Ok(())
 }
